@@ -101,3 +101,8 @@ input[type=text]:focus, input[type=search]:focus { outline: 2px solid var(--gree
 .dialog .actions .btn { width: auto; border: 0; min-height: 44px; border-radius: 22px; padding: 0 14px; }
 .dialog .stack { display: flex; flex-direction: column; gap: 8px; }
 .toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: #323232; color: #fff; padding: 10px 16px; border-radius: 8px; font-size: 14px; z-index: 20; max-width: 90%; }
+
+.hint { min-height: 20px; font-size: 14px; font-weight: 500; }
+.hint.is-ok { color: var(--green); }
+.hint.is-bad { color: var(--red); }
+.scan-hint { font-size: 13px; color: var(--muted); }

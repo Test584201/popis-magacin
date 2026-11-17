@@ -2,7 +2,7 @@
 'use strict';
 (function () {
 
-// ═════════════════════════════════════════════════════════════ UVOZ (isto kao desktop core.py)
+// ═════════════════════════════════════════════════════════════ UVOZ (XLSX, XLS, XML, CSV)
 
 const CYR = {
   'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'ђ': 'dj', 'е': 'e', 'ж': 'z', 'з': 'z', 'и': 'i', 'ј': 'j',
@@ -104,7 +104,7 @@ function buildResult(records, fmt) {
     const naziv = (r.naziv || '').trim();
     const barkod = fixBarcode(r.barkod || '');
     if (!sifra && !naziv && !barkod) continue;
-    items.push({ sifra, naziv, barkod, kolicina: toNumber(r.kolicina), popisano: 0, scanned: false, unknown: false });
+    items.push({ sifra, naziv, barkod, kolicina: toNumber(r.kolicina), popisano: 0, scanned: false, unknown: false, added: [] });
     if (!barkod) noBarcode++;
   }
   if (!items.length) throw new Error('Nisu pronađeni artikli. Provjerite da fajl ima kolone: ŠIFRA, NAZIV, BARKOD, KOLIČINA.');
@@ -230,7 +230,7 @@ function parseFile(buffer) {
 // ═════════════════════════════════════════════════════════════ PODACI (IndexedDB)
 
 let state = { items: [], nextId: 1, device: '' };
-let idx = { b: new Map(), t: new Map(), s: new Map() };
+let idx = { b: new Map(), t: new Map(), s: new Map(), sl: new Map() };
 let persistOk = true;
 
 function openDb() {
@@ -265,39 +265,57 @@ async function saveNow() {
     });
   } catch (e) { persistOk = false; }
 }
-function save() { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 300); }
+function save() { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 100); }
 window.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && saveTimer) saveNow(); });
 window.addEventListener('pagehide', () => { if (saveTimer) saveNow(); });
 
 const trimZeros = (s) => s.replace(/^0+/, '');
 function rebuildIndex() {
-  idx = { b: new Map(), t: new Map(), s: new Map() };
+  idx = { b: new Map(), t: new Map(), s: new Map(), sl: new Map() };
   for (const it of state.items) indexItem(it);
 }
-function indexItem(it) {
-  if (it.barkod) {
-    if (!idx.b.has(it.barkod)) idx.b.set(it.barkod, it);
-    const t = trimZeros(it.barkod);
-    if (t && !idx.t.has(t)) idx.t.set(t, it);
-  }
-  if (it.sifra && !idx.s.has(it.sifra)) idx.s.set(it.sifra, it);
+function indexBarcode(it, code) {
+  if (!code) return;
+  if (!idx.b.has(code)) idx.b.set(code, it);
+  const t = trimZeros(code);
+  if (t && !idx.t.has(t)) idx.t.set(t, it);
 }
-function findByCode(code) {
+function indexItem(it) {
+  indexBarcode(it, it.barkod);
+  (it.added || []).forEach((c) => indexBarcode(it, c));
+  if (it.sifra && !idx.s.has(it.sifra)) idx.s.set(it.sifra, it);
+  if (it.sifra && !idx.sl.has(it.sifra.toLowerCase())) idx.sl.set(it.sifra.toLowerCase(), it);
+}
+function findByBarcode(code) {
   const c = (code || '').trim();
   if (!c) return null;
   if (idx.b.has(c)) return idx.b.get(c);
   const t = trimZeros(c);
-  if (t && idx.t.has(t)) return idx.t.get(t);
-  return idx.s.get(c) || null;
+  return (t && idx.t.get(t)) || null;
+}
+function findBySifra(sifra) {
+  const c = (sifra || '').trim();
+  if (!c) return null;
+  return idx.s.get(c) || idx.sl.get(c.toLowerCase()) || null;
+}
+function findByCode(code) {                       // polje „Barkod / Šifra“: prvo barkod, pa šifra
+  return findByBarcode(code) || findBySifra(code);
+}
+// Jedna šifra može imati više barkodova, ali jedan barkod pripada samo jednoj šifri.
+function assignBarcode(it, code) {
+  code = (code || '').trim();
+  if (!code) return { ok: false, error: 'Barkod je prazan.' };
+  const owner = findByBarcode(code);
+  if (owner && owner !== it) {
+    return { ok: false, error: 'Barkod je već dodijeljen šifri ' + (owner.sifra || '(bez šifre)') + ' (' + owner.naziv + ').' };
+  }
+  if (owner === it) return { ok: true, already: true };
+  it.added = (it.added || []).concat(code);
+  indexBarcode(it, code); save();
+  return { ok: true };
 }
 function addCount(it, delta) { it.popisano = Math.max(0, round3(it.popisano + delta)); it.scanned = true; save(); }
 function setCount(it, v) { it.popisano = Math.max(0, round3(v)); it.scanned = true; save(); }
-function addUnknown(barkod, naziv, qty) {
-  const it = { id: state.nextId++, sifra: '', naziv: naziv.trim() ? 'NEPOZNAT: ' + naziv.trim() : 'NEPOZNAT ARTIKAL',
-    barkod, kolicina: 0, popisano: Math.max(0, qty), scanned: true, unknown: true };
-  state.items.push(it); indexItem(it); save();
-  return it;
-}
 function replaceAll(items) {
   state.items = items.map((it) => Object.assign({ id: 0 }, it));
   state.items.forEach((it) => { it.id = state.nextId++; });
@@ -321,17 +339,18 @@ const parseQty = (s) => { const n = Number(String(s).trim().replace(',', '.')); 
 
 // ═════════════════════════════════════════════════════════════ IZVOZ
 
-const HEADERS = ['ŠIFRA', 'NAZIV', 'BARKOD', 'KOLIČINA', 'POPISANO', 'RAZLIKA'];
+const HEADERS = ['ŠIFRA', 'NAZIV', 'BARKOD', 'KOLIČINA', 'POPISANO', 'RAZLIKA', 'NOVI BARKODOVI'];
 function exportRows() {
   return state.items.map((it) => [
     it.sifra, it.naziv, it.barkod, it.kolicina,
     it.scanned ? it.popisano : null,
-    it.scanned ? round3(it.popisano - it.kolicina) : null
+    it.scanned ? round3(it.popisano - it.kolicina) : null,
+    (it.added && it.added.length) ? it.added.join(', ') : null
   ]);
 }
 function buildXlsx() {
   const ws = XLSX.utils.aoa_to_sheet([HEADERS].concat(exportRows()));
-  ws['!cols'] = [14, 44, 20, 12, 12, 12].map((w) => ({ wch: w }));
+  ws['!cols'] = [14, 44, 20, 12, 12, 12, 30].map((w) => ({ wch: w }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Popis');
   const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
@@ -518,7 +537,7 @@ function exportDialog() {
   };
   const d = dialog({ title: 'Izvoz rezultata',
     body: h('div', { class: 'stack' },
-      h('p', {}, 'Fajl sadrži kolone ŠIFRA, NAZIV, BARKOD, KOLIČINA, POPISANO, RAZLIKA i učitava se u desktop aplikaciju.'),
+      h('p', {}, 'Fajl sadrži kolone ŠIFRA, NAZIV, BARKOD, KOLIČINA, POPISANO, RAZLIKA i NOVI BARKODOVI (barkodovi koje ste dodijelili šiframa) i otvara se u Excelu.'),
       h('button', { class: 'btn primary', onclick: () => { d.close(); share(); } }, 'Pošalji (e-pošta, Viber, WhatsApp…)'),
       h('button', { class: 'btn', onclick: () => { d.close(); download(buildXlsx(), base + '.xlsx'); toast('Sačuvano u Preuzimanja.'); } }, 'Sačuvaj kao XLSX'),
       h('button', { class: 'btn', onclick: () => { d.close(); download(buildCsv(), base + '.csv'); toast('Sačuvano u Preuzimanja.'); } }, 'Sačuvaj kao CSV')),
@@ -540,7 +559,7 @@ function listScreen() {
     const sorted = state.items; // redoslijed iz fajla
     for (const it of sorted) {
       if (onlyCounted && !it.scanned) continue;
-      if (q && !(it.naziv + ' ' + it.sifra + ' ' + it.barkod).toLowerCase().includes(q)) continue;
+      if (q && !(it.naziv + ' ' + it.sifra + ' ' + it.barkod + ' ' + (it.added || []).join(' ')).toLowerCase().includes(q)) continue;
       if (out.length >= 300) { more = true; break; }
       out.push(it);
     }
@@ -552,7 +571,7 @@ function listScreen() {
         title: it.naziv, label: 'Popisana količina (ukupno)', initial: it.scanned ? fmtQty(it.popisano) : '',
         onSave: (v) => { setCount(it, v); fill(); } }) },
         h('div', { class: 't' }, it.naziv || '(bez naziva)'),
-        h('div', { class: 's' }, 'Šifra: ' + it.sifra + '   Barkod: ' + it.barkod),
+        h('div', { class: 's' }, 'Šifra: ' + it.sifra + '   Barkod: ' + [it.barkod].concat(it.added || []).filter(Boolean).join(', ')),
         h('div', { class: 'q' }, 'Knjigovodstveno: ' + fmtQty(it.kolicina) + '    Popisano: ' + (it.scanned ? fmtQty(it.popisano) : '—')));
     }));
   }
@@ -570,8 +589,9 @@ function listScreen() {
 const FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'code_93', 'itf', 'codabar', 'qr_code'];
 
 function scanScreen() {
-  let autoAdd = true, last = null, message = 'Uperite kameru u barkod artikla.';
-  let lastCode = '', lastTime = 0, stopped = false, stream = null, track = null, torch = false, timer = null, wake = null;
+  let last = null, message = 'Uperite kameru u barkod artikla.';
+  let lastCode = '', stopped = false, stream = null, track = null, torch = false, timer = null, wake = null;
+  const seen = {};   // kada je koji kod zadnji put viđen u kadru
 
   const video = h('video', { playsinline: '', muted: '', autoplay: '' });
   video.muted = true;
@@ -579,9 +599,8 @@ function scanScreen() {
   const wrap = h('div', { class: 'scan-wrap' }, video, h('div', { class: 'scan-frame' }), h('div', { class: 'scan-line' }), msgEl);
   const lastEl = h('div', { class: 'last' });
   const torchBtn = h('button', { class: 'btn small', style: 'display:none' }, 'Lampa: isklj.');
-  const autoSw = h('input', { type: 'checkbox', role: 'switch', checked: true });
-  autoSw.addEventListener('change', () => { autoAdd = autoSw.checked; });
-  const manual = h('input', { type: 'text', inputmode: 'numeric', placeholder: 'Barkod ručno (ako kamera ne čita)', 'aria-label': 'Ručni unos barkoda', id: 'manual-code' });
+  const manual = h('input', { type: 'text', inputmode: 'text', placeholder: 'Barkod / Šifra', 'aria-label': 'Barkod ili šifra',
+    id: 'manual-code', autocomplete: 'off', autocapitalize: 'off' });
   const manualBtn = h('button', { class: 'btn small primary', id: 'manual-go' }, 'Traži');
   const submitManual = () => { const c = manual.value.trim(); if (c) { manual.value = ''; handleCode(c, true); } };
   manualBtn.addEventListener('click', submitManual);
@@ -589,45 +608,63 @@ function scanScreen() {
 
   function renderLast(flash) {
     if (!last) { lastEl.replaceChildren(h('div', {}, message)); return; }
+    const codes = [last.barkod].concat(last.added || []).filter(Boolean).join(', ');
     lastEl.replaceChildren(
       h('div', { class: 'name' }, last.naziv),
-      h('div', { style: 'font-size:12px' }, 'Šifra: ' + last.sifra + '   Barkod: ' + last.barkod + (message ? '   · ' + message : '')),
+      h('div', { style: 'font-size:12px' }, 'Šifra: ' + last.sifra + '   Barkod: ' + codes + (message ? '   · ' + message : '')),
       h('div', { class: 'nums' }, 'Popisano: ' + fmtQty(last.popisano) + '    Knjigov.: ' + fmtQty(last.kolicina)),
       h('div', { class: 'row' },
-        h('button', { class: 'btn', onclick: () => { addCount(last, -1); message = ''; renderLast(); } }, '−1'),
-        h('button', { class: 'btn primary', onclick: () => { addCount(last, 1); message = ''; renderLast(true); } }, '+1'),
         h('button', { class: 'btn', onclick: () => qtyDialog({ title: last.naziv, label: 'Popisana količina (ukupno)', initial: fmtQty(last.popisano),
           onSave: (v) => { setCount(last, v); message = ''; renderLast(true); } }) }, 'Unesi količinu…')));
     if (flash) { lastEl.classList.remove('flash'); void lastEl.offsetWidth; lastEl.classList.add('flash'); }
   }
 
+  // Skeniran (ili upisan) kod: ako artikal postoji, odmah se nudi unos količine (podrazumijevano 1);
+  // ako ne postoji, nudi se dodjela barkoda nekoj šifri.
   function handleCode(code, force) {
-    if (dialogCount > 0) return;
     const now = Date.now();
-    if (!force && code === lastCode && now - lastTime < 2000) return;
-    if (!force && now - lastClose < 1200 && code === lastCode) return;
-    lastCode = code; lastTime = now;
-    const found = findByCode(code);
-    if (!found) { beep(false); unknownDialog(code); return; }
-    beep(true);
-    last = found;
-    if (autoAdd) { addCount(found, 1); message = 'Dodano +1'; renderLast(true); }
-    else {
-      message = '';
-      renderLast();
-      qtyDialog({ title: found.naziv, label: 'Količina za dodavanje', initial: '1', onSave: (v) => { addCount(found, v); message = 'Dodano +' + fmtQty(v); renderLast(true); } });
-    }
-  }
-  function unknownDialog(code) {
-    const name = h('input', { type: 'text', 'aria-label': 'Naziv (neobavezno)' });
-    const qty = h('input', { type: 'text', inputmode: 'decimal', value: '1', 'aria-label': 'Količina' });
-    const d = dialog({ title: 'Barkod nije u listi',
-      body: h('div', { class: 'stack' }, h('p', {}, 'Barkod: ' + code),
-        h('label', { class: 'field' }, 'Naziv (neobavezno)', name), h('label', { class: 'field' }, 'Količina', qty)),
-      actions: [{ label: 'Preskoči' }, { label: 'Dodaj kao novi', onClick: (c) => {
-        const v = parseQty(qty.value); if (!(v >= 0)) return; c();
-        last = addUnknown(code, name.value, v); message = 'Dodan novi artikal'; renderLast(true); } }] });
+    const prev = seen[code] || 0;
+    seen[code] = now;                                   // dok je isti barkod u kadru, stalno se osvježava
+    if (dialogCount > 0) return;
+    if (!force && code === lastCode && now - prev < 1500) return;   // isti barkod još uvijek u kadru
     lastCode = code;
+    const found = findByCode(code);
+    if (!found) { beep(false); assignDialog(code); return; }
+    beep(true);
+    addQtyDialog(found);
+  }
+
+  function addQtyDialog(it) {
+    last = it; message = ''; renderLast();
+    qtyDialog({ title: it.naziv, label: 'Količina (dodaje se na popisano: ' + fmtQty(it.scanned ? it.popisano : 0) + ')', initial: '1',
+      onSave: (v) => { addCount(it, v); message = 'Dodano +' + fmtQty(v); renderLast(true); } });
+  }
+
+  function assignDialog(code) {
+    const sifra = h('input', { type: 'text', id: 'assign-sifra', 'aria-label': 'Šifra artikla', autocomplete: 'off', autocapitalize: 'off' });
+    const hint = h('div', { class: 'hint', id: 'assign-hint', 'aria-live': 'polite' });
+    let target = null;
+    const check = () => {
+      const v = sifra.value.trim();
+      target = v ? findBySifra(v) : null;
+      hint.className = 'hint' + (v ? (target ? ' is-ok' : ' is-bad') : '');
+      hint.textContent = !v ? '' : target ? '✓ ' + target.naziv : 'Šifra ne postoji';
+    };
+    sifra.addEventListener('input', check);
+    const d = dialog({ title: 'Barkod nije u listi',
+      body: h('div', { class: 'stack' },
+        h('p', {}, 'Barkod: ' + code),
+        h('p', {}, 'Dodijelite ga šifri artikla. Jedna šifra može imati više barkodova.'),
+        h('label', { class: 'field' }, 'Šifra artikla', sifra), hint),
+      actions: [{ label: 'Preskoči' }, { label: 'Dodijeli šifri', onClick: (c) => {
+        check();
+        if (!target) { if (!sifra.value.trim()) { hint.className = 'hint is-bad'; hint.textContent = 'Upišite šifru.'; } beep(false); sifra.focus(); return; }
+        const r = assignBarcode(target, code);
+        if (!r.ok) { hint.className = 'hint is-bad'; hint.textContent = r.error; beep(false); return; }
+        c(); toast('Barkod dodijeljen: ' + target.naziv); addQtyDialog(target);
+      } }] });
+    sifra.addEventListener('keydown', (e) => { if (e.key === 'Enter') d.actions[1].el.click(); });
+    setTimeout(() => sifra.focus(), 100);
   }
 
   // kamera
@@ -718,7 +755,7 @@ function scanScreen() {
   };
 
   app().append(appbar('Skeniranje', true), wrap,
-    h('div', { class: 'scan-controls' }, h('label', { class: 'switch' }, autoSw, 'Svaki sken = +1'), torchBtn),
+    h('div', { class: 'scan-controls' }, h('span', { class: 'scan-hint' }, 'Skenirajte barkod ili ga upišite ispod.'), torchBtn),
     h('div', { class: 'manual' }, manual, manualBtn), lastEl);
   renderLast();
   start();
@@ -736,7 +773,7 @@ async function init() {
   }
   render();
 }
-window.__popis = { parseFile, findByCode, get state() { return state; } };   // za testiranje
+window.__popis = { parseFile, findByCode, findByBarcode, findBySifra, assignBarcode, get state() { return state; } };   // za testiranje
 init();
 
 })();

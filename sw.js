@@ -1,5 +1,5 @@
 /* Service worker: sve se kešira pri prvom otvaranju, pa aplikacija radi i bez interneta. */
-const CACHE = 'popis-magacin-v2';
+const CACHE = 'popis-magacin-v4';
 const FILES = [
   './', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest',
   'libs/xlsx.full.min.js', 'libs/zxing.min.js',
