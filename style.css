@@ -106,3 +106,14 @@ input[type=text]:focus, input[type=search]:focus { outline: 2px solid var(--gree
 .hint.is-ok { color: var(--green); }
 .hint.is-bad { color: var(--red); }
 .scan-hint { font-size: 13px; color: var(--muted); }
+
+/* v5: sijalica, "Dodano", odbrojavanje, veliko polje količine */
+.last .row { justify-content: space-between; align-items: center; }
+.last .row .btn.torch { margin-left: auto; width: 56px; min-width: 56px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.last .row .btn.torch.on { background: var(--green); border-color: var(--green); color: #fff; }
+.last .added { font-size: 28px; font-weight: 800; color: #0B57D0; line-height: 1.15; }
+.hold { font-size: 13px; font-weight: 600; color: #8A5100; }
+.hold:empty { display: none; }
+.auto-note { font-size: 13px; font-weight: 600; color: #8A5100; text-align: center; min-height: 18px; }
+.qty-field { align-items: center; text-align: center; }
+.qty-input { font-size: 44px; font-weight: 800; text-align: center; width: calc(5ch + 40px); height: 76px; padding: 0 8px; letter-spacing: 1px; }
