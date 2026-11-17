@@ -1,7 +1,7 @@
 /* Popis Magacin – web aplikacija (PWA). Radi offline, instalira se na početni ekran telefona. */
 'use strict';
 (function () {
-  const APP_VERSION = '7';
+  const APP_VERSION = '8';
 
 // ═════════════════════════════════════════════════════════════ UVOZ (XLSX, XLS, XML, CSV)
 
@@ -559,7 +559,7 @@ function exportDialog() {
 function editDialog(it, done) {
   const f = (label, val, id) => h('label', { class: 'field' }, label, h('input', { type: 'text', value: val || '', id, autocomplete: 'off' }));
   const err = h('div', { class: 'hint is-bad', id: 'edit-err' });
-  const body = h('div', { class: 'stack' }, f('Naziv artikla', it.naziv, 'ed-naziv'), f('Šifra', it.sifra, 'ed-sifra'), f('Barkod', it.barkod, 'ed-barkod'), err);
+  const body = h('div', { class: 'stack' }, f('Naziv artikla', it.naziv, 'ed-naziv'), f('Šifra', it.sifra, 'ed-sifra'), f('Barkod', it.barkod, 'ed-barkod'), f('Dodijeljeni barkodovi (više njih odvojite zarezom)', (it.added || []).join(', '), 'ed-added'), err);
   dialog({ title: 'Uredi artikal', body, actions: [
     { label: 'Otkaži' },
     { label: 'Sačuvaj', onClick: (close) => {
@@ -569,11 +569,13 @@ function editDialog(it, done) {
       if (!sifra) { err.textContent = 'Šifra ne smije biti prazna.'; return; }
       const dupS = state.items.find((x) => x !== it && x.sifra.toLowerCase() === sifra.toLowerCase());
       if (dupS) { err.textContent = 'Šifra već postoji: ' + dupS.naziv; return; }
-      if (barkod) {
-        const dupB = findByBarcode(barkod);
-        if (dupB && dupB !== it) { err.textContent = 'Barkod je već kod šifre ' + dupB.sifra + ' (' + dupB.naziv + ').'; return; }
+      const added = [...new Set(body.querySelector('#ed-added').value.split(/[,;\s]+/).map((x) => x.trim()).filter((x) => x && x !== barkod))];
+      for (const c of [barkod].concat(added)) {
+        if (!c) continue;
+        const dupB = findByBarcode(c);
+        if (dupB && dupB !== it) { err.textContent = 'Barkod ' + c + ' je već kod šifre ' + dupB.sifra + ' (' + dupB.naziv + ').'; return; }
       }
-      it.naziv = naziv; it.sifra = sifra; it.barkod = barkod;
+      it.naziv = naziv; it.sifra = sifra; it.barkod = barkod; it.added = added;
       rebuildIndex(); save(); close(); done();
     } }] });
 }

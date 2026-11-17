@@ -1,5 +1,5 @@
 /* Service worker: kešira za rad bez interneta, ali kad je internet dostupan UVIJEK uzima najnovije fajlove. */
-const CACHE = 'popis-magacin-v7';
+const CACHE = 'popis-magacin-v8';
 const FILES = [
   './', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest',
   'libs/xlsx.full.min.js', 'libs/zxing.min.js',
