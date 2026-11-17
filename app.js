@@ -593,13 +593,13 @@ function scanScreen() {
   let last = null, message = '';
   let lastCode = '', stopped = false, stream = null, track = null, torch = false, timer = null, wake = null;
   const seen = {};   // kada je koji kod zadnji put viđen u kadru
-  const HOLD_MS = 3000, GAP_MS = 1500;
+  const HOLD_MS = 2000, GAP_MS = 1500;
   let hold = null;   // { code, item, t0, dlg, note, autoCount } – automatsko +1 dok se barkod drži u kadru
 
   const video = h('video', { playsinline: '', muted: '', autoplay: '' });
   video.muted = true;
   const msgEl = h('div', { class: 'scan-msg' }, 'Pokretanje kamere…');
-  const wrap = h('div', { class: 'scan-wrap' }, video, h('div', { class: 'scan-frame' }), h('div', { class: 'scan-line' }), msgEl);
+  const wrap = h('div', { class: 'scan-wrap' }, video, h('div', { class: 'scan-frame' }), h('div', { class: 'scan-line' }));
   const lastEl = h('div', { class: 'last' });
   const holdEl = h('div', { class: 'hold', 'aria-live': 'polite' });
   const torchBtn = h('button', { class: 'btn torch', id: 'torch-btn', 'aria-label': 'Lampa', 'aria-pressed': 'false', style: 'display:none' });
@@ -648,7 +648,7 @@ function scanScreen() {
     last = it; message = ''; renderLast();
     const note = h('div', { class: 'auto-note', 'aria-live': 'polite' });
     const d = qtyDialog({ title: it.naziv, label: 'Količina (dodaje se na popisano: ' + fmtQty(it.scanned ? it.popisano : 0) + ')', initial: '1', note,
-      onSave: (v) => { addCount(it, v); message = 'Dodano +' + fmtQty(v); renderLast(true); } });
+      onSave: (v) => { addCount(it, v); message = 'Dodato +' + fmtQty(v); renderLast(true); } });
     return { d, note };
   }
 
@@ -672,9 +672,9 @@ function scanScreen() {
     if (hold.dlg) { const d = hold.dlg; hold.dlg = null; hold.note.textContent = ''; d.close(); }
     addCount(hold.item, 1);
     last = hold.item; hold.autoCount++; hold.t0 = now;
-    message = 'Dodano +' + hold.autoCount;
+    message = 'Dodato +' + hold.autoCount;
     renderLast(true); beep(true);
-    holdEl.textContent = 'Barkod u kadru – automatski +1 za 3 s';
+    holdEl.textContent = 'Barkod u kadru – automatski +1 za 2 s';
   }
   const holdTimer = setInterval(holdTick, 200);
 
@@ -793,7 +793,7 @@ function scanScreen() {
     if (wake) { try { wake.release(); } catch (e) { /* ok */ } }
   };
 
-  app().append(appbar('Skeniranje', true), wrap, h('div', { class: 'manual' }, manual, manualBtn), lastEl);
+  app().append(appbar('Skeniranje', true), wrap, msgEl, h('div', { class: 'manual' }, manual, manualBtn), lastEl);
   renderLast();
   start();
 }
