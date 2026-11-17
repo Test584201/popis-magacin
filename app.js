@@ -1,6 +1,7 @@
 /* Popis Magacin – web aplikacija (PWA). Radi offline, instalira se na početni ekran telefona. */
 'use strict';
 (function () {
+  const APP_VERSION = '7';
 
 // ═════════════════════════════════════════════════════════════ UVOZ (XLSX, XLS, XML, CSV)
 
@@ -427,6 +428,13 @@ function confirmDialog(title, text, okLabel, onOk, danger) {
 function toast(msg) {
   const t = h('div', { class: 'toast' }, msg); document.body.append(t); setTimeout(() => t.remove(), 2500);
 }
+// naziv koji ne stane u jedan red: slova se smanje za 30% i naziv prelazi u sljedeći red
+function fitName(el) {
+  if (!el) return;
+  el.classList.remove('small');
+  if (el.scrollWidth > el.clientWidth + 1) el.classList.add('small');
+}
+
 function qtyDialog({ title, label, initial, onSave, note }) {
   const input = h('input', { type: 'text', inputmode: 'decimal', value: initial, 'aria-label': label, class: 'qty-input', maxlength: '5', size: '5' });
   const wrap = h('label', { class: 'field qty-field' }, label, input);
@@ -435,6 +443,7 @@ function qtyDialog({ title, label, initial, onSave, note }) {
     { label: 'Sačuvaj', onClick: (c) => { const v = parseQty(input.value); if (!(v >= 0)) return; c(); onSave(v); } }] });
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') d.actions[1].el.click(); });
   setTimeout(() => { input.focus(); input.select(); }, 100);
+  fitName(d.box.querySelector('h2'));
   d.input = input;
   return d;
 }
@@ -518,7 +527,7 @@ function homeScreen() {
       h('button', { class: 'btn primary', disabled: st.total === 0, onclick: () => go('scan') }, 'Skeniraj i popisuj'),
       h('button', { class: 'btn', disabled: st.total === 0, onclick: () => go('list') }, 'Lista artikala / ručni unos'),
       h('button', { class: 'btn', disabled: st.total === 0, onclick: exportDialog }, 'Izvezi rezultate popisa'),
-      h('label', { class: 'field', style: 'margin-top:6px' }, 'Oznaka ovog telefona (ulazi u ime izvezenog fajla – korisno kad popisuje više telefona)', deviceInput),
+      h('label', { class: 'field', style: 'margin-top:6px' }, 'Oznaka telefona (Ulazi u ime izvezenog fajla)', deviceInput),
       h('button', { class: 'btn danger', disabled: st.total === 0, onclick: () => confirmDialog('Novi popis?',
         'Sve popisane količine će biti obrisane, a lista artikala ostaje. Ovo se ne može poništiti.', 'Obriši količine',
         () => { resetCounts(); render(); }, true) }, 'Novi popis (poništi popisane količine)'),
@@ -529,7 +538,8 @@ function homeScreen() {
       !isStandalone && !installEvent ? h('div', { class: 'note' }, isIos
         ? 'Za instalaciju: Safari → dugme Podijeli → „Dodaj na početni ekran“.'
         : 'Za instalaciju: u meniju pregledača (⋮) izaberite „Instaliraj aplikaciju“ ili „Dodaj na početni ekran“.') : null,
-      h('div', { class: 'note' }, 'Podržani formati uvoza: XLSX, XLS, XML i CSV sa kolonama ŠIFRA, NAZIV, BARKOD, KOLIČINA (BARKOD može biti prazan). Podaci se čuvaju na ovom telefonu i rade bez interneta.')
+      h('div', { class: 'note' }, 'Podržani formati uvoza: XLSX, XLS, XML i CSV sa kolonama ŠIFRA, NAZIV, BARKOD, KOLIČINA (BARKOD može biti prazan). Podaci se čuvaju na ovom telefonu i rade bez interneta.'),
+      h('div', { class: 'note', id: 'app-version', style: 'text-align:center' }, 'Verzija aplikacije: ' + APP_VERSION)
     ));
 }
 
@@ -546,39 +556,71 @@ function exportDialog() {
 }
 
 // ── lista / ručni unos
+function editDialog(it, done) {
+  const f = (label, val, id) => h('label', { class: 'field' }, label, h('input', { type: 'text', value: val || '', id, autocomplete: 'off' }));
+  const err = h('div', { class: 'hint is-bad', id: 'edit-err' });
+  const body = h('div', { class: 'stack' }, f('Naziv artikla', it.naziv, 'ed-naziv'), f('Šifra', it.sifra, 'ed-sifra'), f('Barkod', it.barkod, 'ed-barkod'), err);
+  dialog({ title: 'Uredi artikal', body, actions: [
+    { label: 'Otkaži' },
+    { label: 'Sačuvaj', onClick: (close) => {
+      const naziv = body.querySelector('#ed-naziv').value.trim();
+      const sifra = body.querySelector('#ed-sifra').value.trim();
+      const barkod = body.querySelector('#ed-barkod').value.trim();
+      if (!sifra) { err.textContent = 'Šifra ne smije biti prazna.'; return; }
+      const dupS = state.items.find((x) => x !== it && x.sifra.toLowerCase() === sifra.toLowerCase());
+      if (dupS) { err.textContent = 'Šifra već postoji: ' + dupS.naziv; return; }
+      if (barkod) {
+        const dupB = findByBarcode(barkod);
+        if (dupB && dupB !== it) { err.textContent = 'Barkod je već kod šifre ' + dupB.sifra + ' (' + dupB.naziv + ').'; return; }
+      }
+      it.naziv = naziv; it.sifra = sifra; it.barkod = barkod;
+      rebuildIndex(); save(); close(); done();
+    } }] });
+}
+
 function listScreen() {
-  let query = '', onlyCounted = false;
+  const PAGE = 300;
+  let query = '', onlyCounted = false, shown = PAGE;
   const listEl = h('div', { class: 'list' });
   const countEl = h('div', { class: 'list-count' });
   const search = h('input', { type: 'search', placeholder: 'Pretraga (naziv, šifra ili barkod)', 'aria-label': 'Pretraga' });
   const sw = h('input', { type: 'checkbox', role: 'switch' });
 
+  // naziv koji ne stane u jedan red: slova se smanje za 30% i prelazi u sljedeći red
+  function fitNames() {
+    listEl.querySelectorAll('.row-card .t').forEach((el) => { if (el.scrollWidth > el.clientWidth + 1) el.classList.add('small'); });
+  }
+
+  // pretraga uvijek prolazi kroz CIJELU listu; prikaz se samo dijeli na stranice po 300
   function fill() {
     const q = query.trim().toLowerCase();
-    const out = [];
-    let more = false;
-    const sorted = state.items; // redoslijed iz fajla
-    for (const it of sorted) {
+    const all = [];
+    for (const it of state.items) {
       if (onlyCounted && !it.scanned) continue;
       if (q && !(it.naziv + ' ' + it.sifra + ' ' + it.barkod + ' ' + (it.added || []).join(' ')).toLowerCase().includes(q)) continue;
-      if (out.length >= 300) { more = true; break; }
-      out.push(it);
+      all.push(it);
     }
-    out.sort((a, b) => (b.unknown - a.unknown));
-    countEl.textContent = more ? 'Prikazano prvih 300 – suzite pretragu.' : 'Prikazano: ' + out.length;
-    listEl.replaceChildren(...out.map((it) => {
+    all.sort((a, b) => (b.unknown - a.unknown));
+    const out = all.slice(0, shown);
+    countEl.textContent = 'Prikazano ' + out.length + ' od ' + all.length + (q || onlyCounted ? ' pronađenih' : ' artikala') + ' (ukupno u bazi: ' + state.items.length + ')';
+    const rows = out.map((it) => {
       const cls = it.unknown ? 'unk' : !it.scanned ? 'none' : it.popisano === it.kolicina ? 'ok' : 'diff';
-      return h('button', { class: 'row-card ' + cls, onclick: () => qtyDialog({
-        title: it.naziv, label: 'Popisana količina (ukupno)', initial: it.scanned ? fmtQty(it.popisano) : '',
-        onSave: (v) => { setCount(it, v); fill(); } }) },
-        h('div', { class: 't' }, it.naziv || '(bez naziva)'),
-        h('div', { class: 's' }, 'Šifra: ' + it.sifra + '   Barkod: ' + [it.barkod].concat(it.added || []).filter(Boolean).join(', ')),
-        h('div', { class: 'q' }, 'Knjigovodstveno: ' + fmtQty(it.kolicina) + '    Popisano: ' + (it.scanned ? fmtQty(it.popisano) : '—')));
-    }));
+      return h('div', { class: 'row-card ' + cls },
+        h('button', { class: 'row-main', onclick: () => qtyDialog({
+          title: it.naziv, label: 'Popisana količina (ukupno)', initial: it.scanned ? fmtQty(it.popisano) : '',
+          onSave: (v) => { setCount(it, v); fill(); } }) },
+          h('div', { class: 't' }, it.naziv || '(bez naziva)'),
+          h('div', { class: 's' }, 'Šifra: ' + it.sifra + '   Barkod: ' + [it.barkod].concat(it.added || []).filter(Boolean).join(', ')),
+          h('div', { class: 'q' }, 'Knjigovodstveno: ' + fmtQty(it.kolicina) + '    Popisano: ' + (it.scanned ? fmtQty(it.popisano) : '—'))),
+        h('button', { class: 'edit-btn', 'aria-label': 'Uredi artikal', onclick: () => editDialog(it, fill) }, 'Uredi'));
+    });
+    if (all.length > out.length) rows.push(h('button', { class: 'btn', onclick: () => { shown += PAGE; fill(); } }, 'Prikaži još ' + Math.min(PAGE, all.length - out.length)));
+    listEl.replaceChildren(...rows);
+    fitNames();
   }
   let t = null;
-  search.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { query = search.value; fill(); }, 200); });
-  sw.addEventListener('change', () => { onlyCounted = sw.checked; fill(); });
+  search.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { query = search.value; shown = PAGE; fill(); }, 200); });
+  sw.addEventListener('change', () => { onlyCounted = sw.checked; shown = PAGE; fill(); });
 
   app().append(appbar('Lista artikala', true),
     h('div', { class: 'list-top' }, search, h('label', { class: 'switch' }, sw, 'Samo popisani')),
@@ -616,7 +658,7 @@ function scanScreen() {
       last ? h('button', { class: 'btn', onclick: () => qtyDialog({ title: last.naziv, label: 'Popisana količina (ukupno)', initial: fmtQty(last.popisano),
         onSave: (v) => { setCount(last, v); message = ''; renderLast(true); } }) }, 'Unesi količinu…') : null,
       torchBtn);                                           // sijalica uvijek dole desno
-    if (!last) { lastEl.replaceChildren(h('div', {}, 'Uperite kameru u barkod artikla.'), holdEl, row); return; }
+    if (!last) { lastEl.replaceChildren(holdEl, row); return; }
     const codes = [last.barkod].concat(last.added || []).filter(Boolean).join(', ');
     lastEl.replaceChildren(...[
       h('div', { class: 'name' }, last.naziv),
@@ -625,6 +667,7 @@ function scanScreen() {
       holdEl,
       h('div', { class: 'nums' }, 'Popisano: ' + fmtQty(last.popisano) + '    Knjigov.: ' + fmtQty(last.kolicina)),
       row].filter(Boolean));
+    fitName(lastEl.querySelector('.name'));
     if (flash) { lastEl.classList.remove('flash'); void lastEl.offsetWidth; lastEl.classList.add('flash'); }
   }
 
@@ -728,7 +771,7 @@ function scanScreen() {
       if (caps.torch) torchBtn.style.display = '';
     } catch (e) { /* nije bitno */ }
     try { if (navigator.wakeLock) wake = await navigator.wakeLock.request('screen'); } catch (e) { /* nije bitno */ }
-    msgEl.textContent = 'Uperite kameru u barkod.';
+    msgEl.textContent = 'Skeniraj barkod artikla.';
     loop();
   }
   function cameraError(text) {
@@ -806,7 +849,9 @@ async function init() {
   rebuildIndex();
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* ok */ }
   if ('serviceWorker' in navigator && window.isSecureContext) {   // https, localhost ili adresa označena u Chrome zastavici
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !window.__reloaded) { window.__reloaded = true; location.reload(); } });   // nova verzija -> automatski ponovo učitaj
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
   }
   render();
 }

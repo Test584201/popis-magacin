@@ -124,3 +124,19 @@ input[type=text]:focus, input[type=search]:focus { outline: 2px solid var(--gree
 .scan-msg { position: static; flex: none; display: flex; align-items: center; justify-content: center; text-align: center; min-height: 52px; padding: 10px 12px; margin-bottom: 8px; background: var(--green); color: #fff; font-size: 14px; font-weight: 500; text-shadow: none; }
 /* v6: "Dodato" crno, uokvireno tankom linijom */
 .last .added { color: #000; border: 1px solid #000; border-radius: 8px; padding: 2px 10px; align-self: flex-start; }
+/* v7: lista – uređivanje, prilagodba naziva */
+.row-card { padding: 0; display: flex; align-items: stretch; cursor: default; }
+.row-card .row-main { flex: 1; min-width: 0; padding: 12px; background: none; border: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.row-card .t { white-space: nowrap; overflow: hidden; text-overflow: clip; font-size: 16px; }
+.row-card .t.small { white-space: normal; font-size: 12.8px; }
+.row-card .edit-btn { flex: none; align-self: center; margin-right: 10px; min-height: 36px; padding: 0 14px; border-radius: 18px; border: 1px solid var(--line); background: rgba(255,255,255,.7); color: var(--green); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
+/* v7: naziv pri skeniranju – jedan red, ako ne stane slova -30% i novi red */
+.last .name { white-space: nowrap; overflow: hidden; }
+.last .name.small { white-space: normal; font-size: 14.4px; }
+.dialog h2 { white-space: nowrap; overflow: hidden; }
+.dialog h2.small { white-space: normal; font-size: 0.8em; }
+/* v7: dugi naziv samo prelazi u sljedeći red, bez smanjenja slova */
+.row-card .t, .row-card .t.small, .last .name, .last .name.small, .dialog h2, .dialog h2.small { white-space: normal; overflow: visible; }
+.row-card .t.small { font-size: 16px; }
+.last .name.small { font-size: 18px; }
+.dialog h2.small { font-size: 22px; }
